@@ -1,0 +1,109 @@
+stages:
+  - build
+  - test
+  - deploy
+
+variables:
+  # Match Bell corporate naming convention (see bce-gcc/bce-internal-apps/governance-hub)
+  APP_NAME: "login-tracker"
+  # Artifactory is Bell's standard Docker registry — $ARTIFACTORY_*_REPO_SHORT
+  # and $TEAM_ARTIFACT_DIR are group-level variables set by your DevOps team
+  DOCKER_IMAGE_DEV_PATH: $ARTIFACTORY_DEV_REPO_SHORT.artifactory.int.bell.ca/$TEAM_ARTIFACT_DIR/$CI_PROJECT_NAME
+  DOCKER_IMAGE_UAT_PATH: $ARTIFACTORY_UAT_REPO_SHORT.artifactory.int.bell.ca/$TEAM_ARTIFACT_DIR/$CI_PROJECT_NAME
+  BACKEND_IMAGE: $DOCKER_IMAGE_DEV_PATH/backend:$CI_COMMIT_SHORT_SHA
+  FRONTEND_IMAGE: $DOCKER_IMAGE_DEV_PATH/frontend:$CI_COMMIT_SHORT_SHA
+  BACKEND_IMAGE_LATEST: $DOCKER_IMAGE_DEV_PATH/backend:latest
+  FRONTEND_IMAGE_LATEST: $DOCKER_IMAGE_DEV_PATH/frontend:latest
+
+# ─── BUILD ────────────────────────────────────────────────────────────────────
+
+build-backend:
+  stage: build
+  image: docker:26
+  services:
+    - docker:26-dind
+  before_script:
+    # Artifactory login — $ARTIFACTORY_USER and $ARTIFACTORY_TOKEN are group-level CI variables
+    - docker login $ARTIFACTORY_DEV_REPO_SHORT.artifactory.int.bell.ca -u $ARTIFACTORY_USER -p $ARTIFACTORY_TOKEN
+  script:
+    - docker build -t $BACKEND_IMAGE -t $BACKEND_IMAGE_LATEST ./backend
+    - docker push $BACKEND_IMAGE
+    - docker push $BACKEND_IMAGE_LATEST
+  only:
+    - main
+    - merge_requests
+
+build-frontend:
+  stage: build
+  image: docker:26
+  services:
+    - docker:26-dind
+  before_script:
+    - docker login $ARTIFACTORY_DEV_REPO_SHORT.artifactory.int.bell.ca -u $ARTIFACTORY_USER -p $ARTIFACTORY_TOKEN
+  script:
+    # VITE_API_URL must be set in GitLab → Settings → CI/CD → Variables
+    - docker build
+        --build-arg VITE_API_URL=$VITE_API_URL
+        -t $FRONTEND_IMAGE
+        -t $FRONTEND_IMAGE_LATEST
+        ./frontend-react
+    - docker push $FRONTEND_IMAGE
+    - docker push $FRONTEND_IMAGE_LATEST
+  only:
+    - main
+    - merge_requests
+
+# ─── TEST ─────────────────────────────────────────────────────────────────────
+
+test-backend:
+  stage: test
+  image: python:3.11-slim
+  script:
+    - cd backend
+    - pip install --quiet -r requirements.txt
+    - python -c "from app.main import app; print('Backend import OK')"
+  only:
+    - main
+    - merge_requests
+
+test-frontend:
+  stage: test
+  image: node:20-alpine
+  script:
+    - cd frontend-react
+    - npm ci
+    - npm run build
+  only:
+    - main
+    - merge_requests
+
+# ─── DEPLOY ───────────────────────────────────────────────────────────────────
+# Requires these CI/CD variables set in GitLab → Settings → CI/CD → Variables:
+#   OPENSHIFT_SERVER    — e.g. https://api.openshift.int.bell.ca:6443
+#   OPENSHIFT_TOKEN     — service account token (masked)
+#   OPENSHIFT_NAMESPACE — your OpenShift project name
+
+deploy-production:
+  stage: deploy
+  image: quay.io/openshift/origin-cli:latest
+  before_script:
+    - oc login $OPENSHIFT_SERVER --token=$OPENSHIFT_TOKEN --insecure-skip-tls-verify=true
+    - oc project $OPENSHIFT_NAMESPACE
+    # Allow OpenShift to pull images from Artifactory
+    - oc create secret docker-registry artifactory-registry
+        --docker-server=$ARTIFACTORY_DEV_REPO_SHORT.artifactory.int.bell.ca
+        --docker-username=$ARTIFACTORY_USER
+        --docker-password=$ARTIFACTORY_TOKEN
+        --dry-run=client -o yaml | oc apply -f -
+    - oc secrets link default artifactory-registry --for=pull
+  script:
+    - oc apply -f openshift/
+    - oc set image deployment/login-tracker-backend backend=$BACKEND_IMAGE
+    - oc set image deployment/login-tracker-frontend frontend=$FRONTEND_IMAGE
+    - oc rollout status deployment/login-tracker-backend --timeout=3m
+    - oc rollout status deployment/login-tracker-frontend --timeout=3m
+  environment:
+    name: production
+  only:
+    - main
+  when: manual

@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: login-tracker-backend
+  labels:
+    app: login-tracker
+    component: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: login-tracker
+      component: backend
+  template:
+    metadata:
+      labels:
+        app: login-tracker
+        component: backend
+    spec:
+      containers:
+        - name: backend
+          image: placeholder  # replaced by CI pipeline on deploy
+          ports:
+            - containerPort: 8000
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: login-tracker-secrets
+                  key: DATABASE_URL
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: login-tracker-secrets
+                  key: SECRET_KEY
+          readinessProbe:
+            httpGet:
+              path: /docs
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: login-tracker-backend
+  labels:
+    app: login-tracker
+    component: backend
+spec:
+  selector:
+    app: login-tracker
+    component: backend
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: login-tracker-backend
+  labels:
+    app: login-tracker
+    component: backend
+spec:
+  to:
+    kind: Service
+    name: login-tracker-backend
+  port:
+    targetPort: 8000
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
