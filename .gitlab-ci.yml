@@ -4,16 +4,13 @@ stages:
   - deploy
 
 variables:
-  # Match Bell corporate naming convention (see bce-gcc/bce-internal-apps/governance-hub)
   APP_NAME: "login-tracker"
-  # Artifactory is Bell's standard Docker registry — $ARTIFACTORY_*_REPO_SHORT
-  # and $TEAM_ARTIFACT_DIR are group-level variables set by your DevOps team
-  DOCKER_IMAGE_DEV_PATH: $ARTIFACTORY_DEV_REPO_SHORT.artifactory.int.bell.ca/$TEAM_ARTIFACT_DIR/$CI_PROJECT_NAME
-  DOCKER_IMAGE_UAT_PATH: $ARTIFACTORY_UAT_REPO_SHORT.artifactory.int.bell.ca/$TEAM_ARTIFACT_DIR/$CI_PROJECT_NAME
-  BACKEND_IMAGE: $DOCKER_IMAGE_DEV_PATH/backend:$CI_COMMIT_SHORT_SHA
-  FRONTEND_IMAGE: $DOCKER_IMAGE_DEV_PATH/frontend:$CI_COMMIT_SHORT_SHA
-  BACKEND_IMAGE_LATEST: $DOCKER_IMAGE_DEV_PATH/backend:latest
-  FRONTEND_IMAGE_LATEST: $DOCKER_IMAGE_DEV_PATH/frontend:latest
+  # Confirmed from cluster: bcespark-uat.artifactory.int.bell.ca/spark/<project>-backend/frontend
+  # $ARTIFACTORY_UAT_REPO_SHORT=bcespark-uat and $TEAM_ARTIFACT_DIR=spark are group-level variables
+  BACKEND_IMAGE: $ARTIFACTORY_UAT_REPO_SHORT.artifactory.int.bell.ca/$TEAM_ARTIFACT_DIR/$CI_PROJECT_NAME-backend:$CI_COMMIT_SHORT_SHA
+  FRONTEND_IMAGE: $ARTIFACTORY_UAT_REPO_SHORT.artifactory.int.bell.ca/$TEAM_ARTIFACT_DIR/$CI_PROJECT_NAME-frontend:$CI_COMMIT_SHORT_SHA
+  BACKEND_IMAGE_LATEST: $ARTIFACTORY_UAT_REPO_SHORT.artifactory.int.bell.ca/$TEAM_ARTIFACT_DIR/$CI_PROJECT_NAME-backend:latest
+  FRONTEND_IMAGE_LATEST: $ARTIFACTORY_UAT_REPO_SHORT.artifactory.int.bell.ca/$TEAM_ARTIFACT_DIR/$CI_PROJECT_NAME-frontend:latest
 
 # ─── BUILD ────────────────────────────────────────────────────────────────────
 
@@ -23,8 +20,7 @@ build-backend:
   services:
     - docker:26-dind
   before_script:
-    # Artifactory login — $ARTIFACTORY_USER and $ARTIFACTORY_TOKEN are group-level CI variables
-    - docker login $ARTIFACTORY_DEV_REPO_SHORT.artifactory.int.bell.ca -u $ARTIFACTORY_USER -p $ARTIFACTORY_TOKEN
+    - docker login $ARTIFACTORY_UAT_REPO_SHORT.artifactory.int.bell.ca -u $ARTIFACTORY_USER -p $ARTIFACTORY_TOKEN
   script:
     - docker build -t $BACKEND_IMAGE -t $BACKEND_IMAGE_LATEST ./backend
     - docker push $BACKEND_IMAGE
@@ -39,7 +35,7 @@ build-frontend:
   services:
     - docker:26-dind
   before_script:
-    - docker login $ARTIFACTORY_DEV_REPO_SHORT.artifactory.int.bell.ca -u $ARTIFACTORY_USER -p $ARTIFACTORY_TOKEN
+    - docker login $ARTIFACTORY_UAT_REPO_SHORT.artifactory.int.bell.ca -u $ARTIFACTORY_USER -p $ARTIFACTORY_TOKEN
   script:
     # VITE_API_URL must be set in GitLab → Settings → CI/CD → Variables
     - docker build
@@ -78,10 +74,13 @@ test-frontend:
     - merge_requests
 
 # ─── DEPLOY ───────────────────────────────────────────────────────────────────
-# Requires these CI/CD variables set in GitLab → Settings → CI/CD → Variables:
-#   OPENSHIFT_SERVER    — e.g. https://api.openshift.int.bell.ca:6443
-#   OPENSHIFT_TOKEN     — service account token (masked)
-#   OPENSHIFT_NAMESPACE — your OpenShift project name
+# CI/CD variables to set in GitLab → Settings → CI/CD → Variables:
+#   OPENSHIFT_SERVER    = https://api.ocp-uat-wyn.bell.corp.bce.ca:6443  (confirmed)
+#   OPENSHIFT_TOKEN     = service account token (masked) — NOT your personal token
+#   OPENSHIFT_NAMESPACE = gccit  (confirmed)
+#   ARTIFACTORY_USER    = your Artifactory username
+#   ARTIFACTORY_TOKEN   = your Artifactory token (masked)
+#   VITE_API_URL        = https://login-tracker-backend-gcc.apps.ocp-uat-wyn.bell.corp.bce.ca
 
 deploy-production:
   stage: deploy
@@ -91,7 +90,7 @@ deploy-production:
     - oc project $OPENSHIFT_NAMESPACE
     # Allow OpenShift to pull images from Artifactory
     - oc create secret docker-registry artifactory-registry
-        --docker-server=$ARTIFACTORY_DEV_REPO_SHORT.artifactory.int.bell.ca
+        --docker-server=$ARTIFACTORY_UAT_REPO_SHORT.artifactory.int.bell.ca
         --docker-username=$ARTIFACTORY_USER
         --docker-password=$ARTIFACTORY_TOKEN
         --dry-run=client -o yaml | oc apply -f -

@@ -59,6 +59,7 @@ metadata:
     app: login-tracker
     component: frontend
 spec:
+  host: login-tracker-gcc.apps.ocp-uat-wyn.bell.corp.bce.ca
   to:
     kind: Service
     name: login-tracker-frontend
