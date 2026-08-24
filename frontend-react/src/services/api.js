@@ -1,5 +1,5 @@
 // VITE_API_URL is set in .env.production for deployment; falls back to local dev
-const BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace(/\/$/, '')
 
 export async function register(username, email, password) {
   const res = await fetch(`${BASE}/auth/register`, {
